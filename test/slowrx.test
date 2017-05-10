@@ -1,0 +1,26 @@
+A.rx *
+A.ack *
+B.rx *
+B.ack *
+
+B.rxspeed 1
+A.tx "Oh my god is this receiving slowly" ack
+B.nextack "finally got it"
+A.ack "finally got it"
+tick 10
+B.rxspeed full
+tick 3
+
+A.tx "Is the speed kinda restored?" ack
+B.nextack "yup"
+A.ack "yup"
+tick 2
+
+B.rxspeed 1
+A.tx "Oh no, its slow again right?" ack
+B.nextack "well yeah"
+A.tmo
+tick 20
+B.rxspeed full
+tick 2
+

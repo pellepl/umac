@@ -1,0 +1,26 @@
+B.txblock on
+A.rx *
+A.ack *
+B.rx *
+B.ack *
+
+A.tx "Why did you put your earmuffs on?" ack
+tick
+A.err -70001
+A.tx "Hello??" ack
+tick
+tick 5
+B.rx "(no one listens to me)"
+A.tx "(no one listens to me)"
+A.tmo
+tick 5
+
+B.nextack "They're off now"
+A.ack "They're off now"
+A.tx "Please someone talk to me" ack
+B.rx "Please someone talk to me"
+tick 5
+B.txblock off
+A.rx "That was nice"
+B.tx "That was nice"
+tick 5

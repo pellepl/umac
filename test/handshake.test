@@ -1,0 +1,31 @@
+A.tx "Hello" ack
+A.tick
+B.rx "Hello"
+B.tick
+A.ack ""
+A.tick
+B.tx "Howdy" ack
+B.tick
+A.rx "Howdy"
+A.tick
+B.ack ""
+B.tick
+
+A.tx "Whats your name?" ack
+A.tx "Ah-tjo!!"
+A.tick
+B.rx *
+B.nextack "Bess"
+B.tick
+A.ack "Bess"
+A.tick
+
+B.tx "Gesundheit"
+B.tx "And yours?" ack
+B.tick
+A.rx *
+A.nextack "Adam"
+A.tick
+B.ack "Adam"
+B.tick
+

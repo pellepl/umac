@@ -1,0 +1,35 @@
+A.rx *
+A.ack *
+B.rx *
+B.ack *
+
+loop 100
+A.tx "Asynced?" ack
+B.rx "Asynced?"
+B.nextack "Bsync"
+A.ack "Bsync"
+tick
+A.rx "Bunsynced1"
+B.tx "Bunsynced1"
+tick
+A.rx "Bunsynced2"
+B.tx "Bunsynced2"
+tick
+A.rx "Bunsynced3"
+B.tx "Bunsynced3"
+tick
+B.tx "Bsynced?" ack
+A.rx "Bsynced?"
+A.nextack "Async"
+B.ack "Async"
+tick
+B.rx "Aunsynced1"
+A.tx "Aunsynced1"
+tick
+B.rx "Aunsynced2"
+A.tx "Aunsynced2"
+tick
+B.rx "Aunsynced3"
+A.tx "Aunsynced3"
+tick
+endloop

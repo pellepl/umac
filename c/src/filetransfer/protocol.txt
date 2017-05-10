@@ -1,0 +1,38 @@
+TX															RX
+ |  SEND_FILE name size mtu_tx dt_min_tx dt_max_tx          |
+ |-----------------------SYNC------------------------------>|
+ |  SEND_FILE ok|abort  mtu_rx dt_min_rx dt_max_rx sessid   |
+ |<----------------------ACK--------------------------------|
+ |             if abort: exit();                            |
+ |             mtu = min(mtu_tx, mtu_rx);                   |
+ |             dt_min = max(dt_min_tx, dt_min_rx);          |
+ |             dt_max = min(dt_max_tx, dt_max_rx);          |
+ |             dt = (dt_max-dt_min)/2 + dt_min;             |
+ |                                                          |
+ |   rec_bitmask = 0;                                       |
+ |  DATA chunk                                              |
+ |-----------------------USYNC----------------------------->|
+ |   wait dt;                                               |
+ |  DATA chunk                                              |
+ |-----------------------USYNC----------------------------->|
+ |   wait dt;                                               |
+ |  DATA chunk                                              |
+ |-----------------------USYNC----------------------------->|
+ |                        ...                               |
+ |                                                          |
+ |                          if chunks_rx >= 16 or           |
+ |                             time > dt*16:                |
+ |                            send_status();                |
+ |                    STATUS ok|abort|fin offs rec_bitmask  |
+ |<----------------------SYNC-------------------------------|
+ |                    STATUS ok|abort dt                    |
+ |-----------------------ACK------------------------------->|
+ |             if abort or fin: exit();                     |
+ |   if delta(rec_bitmask) > 8:                             |
+ |     dt = max(dt_min, dt-ddt);                            |
+ |   else:                                                  |
+ |     dt = min(dt_max, dt+ddt);                            |
+ |                                                          |
+ |                                                          |
+ |                                                          |
+ 
