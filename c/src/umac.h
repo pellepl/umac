@@ -5,7 +5,7 @@
  *
  * Simple protocol stack for transmitting/receiving packets, sort of MAC-like.
  * Packets can either be synchronized (needing an ack) or unsynchronized (not needing ack).
- * The payload length can vary from 0 to 768 bytes.
+ * The payload length can vary from 0 to 769 bytes.
  *
  * The stack handles retransmits automatically. Unless user acks packets herself, the
  * stack auto-acks if necessary. Acks can be piggybacked with payload data.
@@ -74,6 +74,14 @@
 
 #ifndef CFG_UMAC_TICK_TYPE
 #define CFG_UMAC_TICK_TYPE            uint32_t
+#endif
+
+#ifndef UMAC_MAX_LEN
+#define UMAC_MAX_LEN                  769
+#endif
+
+#if UMAC_MAX_LEN > 769
+#error UMAC_MAX_LEN must not exceed 769 bytes
 #endif
 
 #define UMAC_PREAMBLE                 0xfd
@@ -232,7 +240,7 @@ typedef struct umac_s {
 
 /**
  * Initiates protocol stack with given configuration and
- * given rx, tx and ack buffer. The buffers should be 768 bytes each.
+ * given rx, tx and ack buffer. The buffers should be 769 bytes each.
  * @param u           stack struct
  * @param cfg         stack configuration
  * @param rx_buffer   rx buffer

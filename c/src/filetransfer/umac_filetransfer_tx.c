@@ -10,16 +10,17 @@
 int umft_sender_tx_file(umac *u, umft *uft, umft_stream *str,
                          uint32_t filelen, const char *filename,
                          uint16_t mtu, uint32_t dt_min, uint32_t dt_max, uint32_t ddt,
-                         umft_request_call_fn timer_fn, umft_status_fn status_fn) {
+                         umft_request_future_tick_fn timer_fn, umft_status_fn status_fn) {
   memset(uft, 0, sizeof(umft));
   UMFT_ASSOCIATE_WITH_UMAC(u, uft);
-  uft->tx.u = u;
-  uft->tx.length = filelen;
+  uft->u = u;
+  uft->length = filelen;
   uft->tx.ddt = ddt;
   uft->tx.req_pkt_seqno = 0xff;
-  uft->tx.stream = str;
-  uft->tx.timer_fn = timer_fn;
-  uft->tx.status_fn = status_fn;
+  uft->stream = str;
+  uft->timer_fn = timer_fn;
+  uft->status_fn = status_fn;
+  uft->tx.dt = (dt_max - dt_min) / 4 + dt_min;
 
   uint8_t buf[17+256];
   buf[0] = UMFT_CMD_SEND_FILE;
@@ -43,34 +44,33 @@ int umft_sender_rx_pkt_ack(umac *u, uint8_t seqno, uint8_t *data, uint16_t len) 
   if (seqno != uft->tx.req_pkt_seqno || data[0] != UMFT_CMD_SEND_FILE || len != 14) {
     return 0;
   }
-  if (uft->tx.running) {
-    // swallow and ignore
-    return 1;
+  if (uft->running) {
+    return 0;
   }
   uft->tx.req_pkt_seqno = 0xff;
   uint8_t rxsta = data[1];
   uint16_t rxmtu = UMFT_TO_16BIT(&data[2]);
   uint32_t rxdt_min = UMFT_TO_32BIT(&data[4]);
   uint32_t rxdt_max = UMFT_TO_32BIT(&data[8]);
-  uint16_t sess_id = UMFT_TO_16BIT(&data[10]);
+  uint16_t sess_id = UMFT_TO_16BIT(&data[12]);
 
   switch (rxsta) {
   case UMFT_STA_OK:
-    uft->tx.running = 1;
+    uft->running = 1;
     break;
   case UMFT_STA_ABORT:
   default:
-    uft->tx.running = 0;
-    if (uft->tx.status_fn)  uft->tx.status_fn(uft, UMFT_STA_ABORT);
+    uft->running = 0;
+    if (uft->status_fn)  uft->status_fn(uft, UMFT_STA_ABORT);
     break;
   }
-  if (uft->tx.running) {
-    uft->tx.mtu = rxmtu;
-    uft->tx.session = sess_id;
-    uft->tx.dt_min = rxdt_min;
-    uft->tx.dt_max = rxdt_max;
+  if (uft->running) {
+    uft->mtu = rxmtu;
+    uft->session = sess_id;
+    uft->dt_min = rxdt_min;
+    uft->dt_max = rxdt_max;
     uft->tx.dt = (rxdt_max - rxdt_min)/4 + rxdt_min;
-    uft->tx.timer_fn(uft, uft->tx.dt);
+    uft->timer_fn(uft, uft->tx.dt);
   }
   return 1;
 }
@@ -78,20 +78,21 @@ int umft_sender_rx_pkt_ack(umac *u, uint8_t seqno, uint8_t *data, uint16_t len) 
 static int umft_send_next_chunk(umac *u, umft *uft) {
   int i;
   int res = UMAC_OK;
-  uint16_t mtu = uft->tx.mtu;
+  uint16_t mtu = uft->mtu;
+  uint32_t tx_offset = uft->tx.tx_offset;
   for (i = 0; i < 32; i++) {
     if ((uft->tx.txbitmask & (1<<i)) == 0) {
-      uint32_t mtu_offset = i + uft->tx.tx_offset;
+      uint32_t mtu_offset = i + tx_offset;
       uint8_t buf[1+2+4+mtu];
       buf[0] = UMFT_CMD_DATA_CHUNK;
-      UMFT_FROM_16BIT(uft->tx.session, &buf[1]);
+      UMFT_FROM_16BIT(uft->session, &buf[1]);
       UMFT_FROM_32BIT(mtu_offset, &buf[3]);
       uint32_t file_offs = mtu_offset * mtu;
-      if (file_offs > uft->tx.length) {
+      if (file_offs >= uft->length) {
         break;
       }
-      uint16_t chunk_len = uft->tx.length - file_offs < mtu ? uft->tx.length - file_offs : mtu;
-      uft->tx.stream->read_data_fn(uft->tx.stream, file_offs, &buf[7], chunk_len);
+      uint16_t chunk_len = uft->length - file_offs < mtu ? uft->length - file_offs : mtu;
+      uft->stream->read_data_fn(uft->stream, file_offs, &buf[7], chunk_len);
       res = umac_tx_pkt(u, 0, buf, 1+2+4+chunk_len);
       if (res == UMAC_OK) {
         uft->tx.txbitmask |= (1<<i);
@@ -115,18 +116,18 @@ int umft_sender_rx_pkt(umac *u, uint8_t seqno, uint8_t *data, uint16_t len, uint
   }
   umft *uft = UMFT_GET(u);
 
-  uint16_t sess_id =  UMFT_TO_32BIT(&data[2]);
-  if (sess_id != uft->tx.session) {
+  uint16_t sess_id =  UMFT_TO_16BIT(&data[1]);
+  if (sess_id != uft->session) {
     return 0; // not for me
   }
 
-  uint8_t rxsta = data[1];
+  uint8_t rxsta = data[3];
   uint32_t rxoffset = UMFT_TO_32BIT(&data[4]);
   uint32_t rxbitmask = UMFT_TO_32BIT(&data[8]);
 
 
   uint8_t ack_res;
-  if (!uft->tx.running) {
+  if (!uft->running) {
     // swallow and ignore
     ack_res = UMFT_STA_ABORT;
   } else {
@@ -136,14 +137,14 @@ int umft_sender_rx_pkt(umac *u, uint8_t seqno, uint8_t *data, uint16_t len, uint
       break;
     case UMFT_STA_FIN:
       ack_res = UMFT_STA_FIN;
-      uft->tx.running = 0;
-      if (uft->tx.status_fn)  uft->tx.status_fn(uft, UMFT_STA_FIN);
+      uft->running = 0;
+      if (uft->status_fn)  uft->status_fn(uft, UMFT_STA_FIN);
       break;
     case UMFT_STA_ABORT:
     default:
       ack_res = UMFT_STA_ABORT;
-      uft->tx.running = 0;
-      if (uft->tx.status_fn)  uft->tx.status_fn(uft, UMFT_STA_ABORT);
+      uft->running = 0;
+      if (uft->status_fn)  uft->status_fn(uft, UMFT_STA_ABORT);
       break;
     }
   }
@@ -162,21 +163,22 @@ int umft_sender_rx_pkt(umac *u, uint8_t seqno, uint8_t *data, uint16_t len, uint
     acked_pkts += _count_bits( adj_rxbitmask & (~p_rxbitmask) );
     // now shift away the delta from previous bitmask
     p_rxbitmask >>= d_offs;
+  } else {
+    // count all zeroes that became one
+    acked_pkts += _count_bits(rxbitmask & (~p_rxbitmask));
   }
-  // count all zeroes that became one
-  acked_pkts += _count_bits(rxbitmask & (~p_rxbitmask));
 
-  uft->tx.acked_bytes += acked_pkts * uft->tx.mtu;
+  uft->acked_bytes += acked_pkts * uft->mtu;
 
   // adjust delta time
   if (acked_pkts <= 8) {
     // dropping a lot of packets, increase delta => lower bandwidth
     uint32_t ndt = uft->tx.dt + uft->tx.ddt;
-    uft->tx.dt = ndt > uft->tx.dt_max ? uft->tx.dt_max : ndt;
+    uft->tx.dt = ndt > uft->dt_max ? uft->dt_max : ndt;
   } else {
     // try to decrease delta => higher bandwidth
-    uint32_t ndt = uft->tx.dt > uft->tx.ddt ? (uft->tx.dt - uft->tx.ddt) : uft->tx.dt_min;
-    uft->tx.dt = ndt < uft->tx.dt_min ? uft->tx.dt_min : ndt;
+    uint32_t ndt = uft->tx.dt > uft->tx.ddt ? (uft->tx.dt - uft->tx.ddt) : uft->dt_min;
+    uft->tx.dt = ndt < uft->dt_min ? uft->dt_min : ndt;
   }
 
   uft->tx.p_rxoffset = rxoffset;
@@ -194,11 +196,11 @@ int umft_sender_rx_pkt(umac *u, uint8_t seqno, uint8_t *data, uint16_t len, uint
   return 1;
 }
 
-void umft_sender_timer(umft *uft) {
-  if (uft->tx.running) {
-    umft_send_next_chunk(uft->tx.u, uft);
-    if (uft->tx.acked_bytes < uft->tx.length) {
-      uft->tx.timer_fn(uft, uft->tx.dt);
+void umft_sender_tick(umft *uft) {
+  if (uft->running) {
+    umft_send_next_chunk(uft->u, uft);
+    if (uft->acked_bytes < uft->length) {
+      uft->timer_fn(uft, uft->tx.dt);
     }
   }
 }

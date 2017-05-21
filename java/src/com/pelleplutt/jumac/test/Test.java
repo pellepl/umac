@@ -26,8 +26,10 @@ public class Test {
     t.ubctx = new Juctx();
     t.cua = t.makeConfig(t.uactx);
     t.cub = t.makeConfig(t.ubctx);
-    t.ua = new Jumac(t.cua, 6, false, 3);
-    t.ub = new Jumac(t.cub, 6, false, 3);
+    t.ua = new Jumac(6, false, 3);
+    t.ua.setConfig(t.cua);
+    t.ub = new Jumac(6, false, 3);
+    t.ub.setConfig(t.cub);
     t.uactx.name = "ADAM";
     t.ubctx.name = "BESS";
     t.ua._dbg_name = "umac ADAM ";

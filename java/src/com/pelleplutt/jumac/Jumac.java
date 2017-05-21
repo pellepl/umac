@@ -1,6 +1,22 @@
 package com.pelleplutt.jumac;
 
-public class Jumac {
+/**
+ * Jumac - micro mac for Java
+ *
+ * Simple protocol stack for transmitting/receiving packets, sort of MAC-like.
+ * Packets can either be synchronized (needing an ack) or unsynchronized (not needing ack).
+ * The payload length can vary from 0 to 769 bytes.
+ *
+ * The stack handles retransmits automatically. Unless user acks packets herself, the
+ * stack auto-acks if necessary. Acks can be piggybacked with payload data.
+ *
+ * Only one synchronized packed can be in the air at a time. It is legal to send unsynched
+ * packets while a synchronized is not yet acked, though.
+ *
+ *  Created on: Feb 15, 2016
+ *      Author: petera
+ */
+public class Jumac implements JumacTickable {
   public static final int UMAC_MAX_PAK_LEN = 769;
   public static final int _UMAC_ERR_BASE = -70000;
   public static final int UMAC_OK                       = 0;
@@ -60,12 +76,21 @@ public class Jumac {
 
   public boolean _dbg = false;
   
-  public Jumac(Config cfg, long cfgUmacRxTimeout, boolean cfgUmacNackGarbage, int cfgUmacRetries) {
-    this.cfg = cfg;
+  /**
+   * Construct an umac instance with given settings.
+   * @param cfgUmacRxTimeout    Ticks for a packet to timeout 
+   * @param cfgUmacNackGarbage  Whether non-protocol data should be nacked or not
+   * @param cfgUmacRetries      How many times a packet should be resent if no ack before failing
+   */
+  public Jumac(long cfgUmacRxTimeout, boolean cfgUmacNackGarbage, int cfgUmacRetries) {
     this.txSeqno = 1;
     this.cfgUmacRxTimeout = cfgUmacRxTimeout;
     this.cfgUmacNackGarbage = cfgUmacNackGarbage;
     this.cfgUmacRetries = cfgUmacRetries;
+  }
+
+  public void setConfig(Config cfg) {
+    this.cfg = cfg;
   }
   
   void dbg(String format, Object ...args) {
@@ -75,20 +100,38 @@ public class Jumac {
     }
   }
   
+  /**
+   * Report from stack that a byte was received from PHY
+   * @param c the byte
+   */
   public void report(byte c) {
     parseChar(c);
   }
   
+  /**
+   * Report from stack that many bytes were received from PHY
+   * @param buf   the data
+   * @param offs  offset
+   * @param len   length
+   */
   public void report(byte[] buf, int offs, int len) {
     for (int i = offs; i < offs+len; i++) {
       report(buf[i]);
     }
   }
   
+  /**
+   * Report from stack that many bytes were received from PHY
+   * @param buf   the data
+   */
   public void report(byte[] buf) {
     report(buf, 0, buf.length);
   }
   
+  /**
+   * Call tick when a requested timer times out. See
+   * requestFutureTick in config object.
+   */
   public void tick() {
     long now = cfg.nowTick();
     timersUpdate(now);
@@ -111,6 +154,14 @@ public class Jumac {
     }
   }
 
+  /**
+   * Transmits a packet. Returns sequence number of txed packet,
+   * or 0 if packet does not need ack.
+   * @param ack 0 if packet does not need ack, else packet needs ack
+   * @param buf packet data
+   * @param len packet data length
+   * @return sequence number on acked packet, 0 otherwise, negative on error
+   */
   public int txPacket(boolean ack, byte[] buf, short len) {
     if (awaitAck && ack) {
       dbg("TX: ERR user send sync while BUSY\n");
@@ -130,6 +181,15 @@ public class Jumac {
     return seqno;
   }
 
+  /**
+   * When a synchronous packet is received, rxPak function
+   * in config object is called. In this call, user may ack with
+   * piggybacked data if wanted. If not, the stack autoacks with an
+   * empty ack.
+   * @param buf ack data
+   * @param len ack data length
+   * @return 0 if ok, negative on error
+   */
   public int ackReply(byte[] buf, short len) {
     if (rxPktType != UMAC_PKT_REQ_ACK) {
       dbg("TX: ERR user send ack wrong state\n");
@@ -350,7 +410,7 @@ public class Jumac {
     }
   }
   
-//adjust active timers from now
+  // adjust active timers from now
   void timersUpdate(long now) {
     if (timerRxEnabled) {
       long d = now - timerRxStartTick;
@@ -465,83 +525,56 @@ public class Jumac {
     return crc;
   }
   
+  /**
+   * UMAC configuration/HAL interface
+   */
   public static interface Config {
+    /** handle reception of a packet */
     void rxPak(char seqno, byte[] data, int len, boolean req_ack);
+    /** handle acknowledge of a synchronized sent packet */
     void rxAck(char seqno, byte[] data, int len);
+    /** handle timeout of a synchronized sent packet, no ack */
     void tmo(char seqno);
+    /** handle non UMAC data */
     void garbage(byte b);
+    /** returns current system time */
     long nowTick();
+    /** request a call to tick function in given ticks */
     void requestFutureTick(long delta);
+    /** cancel request to call tick function */
     void cancelFutureTick();
+    /** transmit one byte */
     void tx(byte b);
+    /** transmit multiple bytes */
     void tx(byte[] buf, int len);
+    /** return delta ticks before trying to send an unacked packet again */
     long retryDelta(int tries);
   }
   
-  public static abstract class DefaultConfig implements Config {
+  /**
+   * Utility implementation of UMAC configuration/HAL interface.
+   * Ignores non-umac data unless garbage function is overridden.
+   * Implements a timer, based on System.currentTimeMillis and thread/wait.
+   * Be aware of granularity of this timer.
+   */
+  public static abstract class DefaultAbstractConfig implements Config {
     Jumac umac;
-    private final Object LOCK = new Object();
-    private volatile long alarm;
+    JumacTicker ticker;
     
-    public DefaultConfig(Jumac umac) {
+    public DefaultAbstractConfig(Jumac umac) {
       this.umac = umac;
-      Thread t = new Thread(ticker, "jumac-ticker");
-      t.setDaemon(true);
-      t.start();
+      this.ticker = new JumacTicker();
+      ticker.start(umac);
     }
-    public abstract void rxPak(char seqno, byte[] data, int len, boolean req_ack);
-    public abstract void rxAck(char seqno, byte[] data, int len);
-    public abstract void tmo(char seqno);
-    public abstract long retryDelta(int tries);
-    public abstract void tx(byte b);
-    public abstract void tx(byte[] buf, int len);
     public void garbage(byte b) {}
     public long nowTick() {
-      return System.currentTimeMillis();
+      return ticker.nowTick();
     }
     public void requestFutureTick(long delta) {
-      synchronized (LOCK) {
-        alarm = System.currentTimeMillis() + delta;
-        LOCK.notifyAll();
-      }
+      ticker.requestFutureTick(delta);
     }
     public void cancelFutureTick() {
-      synchronized (LOCK) {
-        alarm = 0;
-        LOCK.notifyAll();
-      }
+      ticker.cancelFutureTick();
     }
-
-    private Runnable ticker = new Runnable() {
-      @Override
-      public void run() {
-        while (true) {
-          boolean trig = false;
-          synchronized (LOCK) {
-            long now = 0; 
-            while (alarm == 0 || (now = System.currentTimeMillis()) < alarm) {
-              try {
-                if (alarm > 0) {
-                  if (alarm - now > 0) {
-                    LOCK.wait(alarm - now);
-                  }
-                } else {
-                  LOCK.wait();
-                }
-              } catch (InterruptedException e) {
-                return;
-              }
-            }
-            if (alarm != 0 && now >= alarm) {
-              trig = true;
-              alarm = 0;
-            }
-          } // sync LOCK
-          if (trig) {
-            umac.tick();
-          }
-        } // while forever
-      }
-    };
   }
 }

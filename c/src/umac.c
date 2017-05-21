@@ -401,7 +401,7 @@ int umac_tx_pkt(umac *u, uint8_t ack, uint8_t *buf, uint16_t len) {
     CFG_UMAC_DBG(u, "TX: ERR user send sync while BUSY\n");
     return UMAC_ERR_BUSY;
   }
-  if (len > 769) {
+  if (len > UMAC_MAX_LEN) {
     CFG_UMAC_DBG(u, "TX: ERR too long\n");
     return UMAC_ERR_TOO_LONG;
   }
@@ -425,7 +425,7 @@ int umac_tx_reply_ack(umac *u, uint8_t *buf, uint16_t len) {
     CFG_UMAC_DBG(u, "TX: ERR user send ack wrong state\n");
     return UMAC_ERR_STATE;
   }
-  if (len > 769) {
+  if (len > UMAC_MAX_LEN) {
     CFG_UMAC_DBG(u, "TX: ERR too long\n");
     return UMAC_ERR_TOO_LONG;
   }
